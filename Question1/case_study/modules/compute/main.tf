@@ -187,41 +187,56 @@ resource "azurerm_availability_set" "app_availabilty_set" {
   location            = var.location
   resource_group_name = var.resource_group
  }
-#Create an internal load balancer
-resource "azurerm_lb" "app_lb" {
- name                = "app_lb"
- location            = var.location
- resource_group_name = var.resource_group
- sku = "Standard"
+#Create an app gateway
+resource "azurerm_application_gateway" "app_gateway" {
+  name                = "app-gateway"
+  location            = var.location
+  resource_group_name = var.resource_group
+  sku {
+    name     = "Standard_v2"
+    tier     = "Standard_v2"
+    capacity = 2
+  }
+  gateway_ip_configuration {
+    name      = "app-gateway-ip-config"
+    subnet_id = var.app_subnet_id
+  }
+  frontend_port {
+    name = "app-gateway-port"
+    port = 80
+  }
+  frontend_ip_configuration {
+    name                 = "app-gateway-ip-config"
+    public_ip_address_id = var.public_ip_address_id
+  }
+  backend_address_pool {
+    name = "app-gateway-backend-pool"
+    backend_address {
+      fqdn = azurerm_virtual_machine_scale_set.app_vmss.load_balancer_backend_address_pool_ids[0]
+    }
+  }
+  backend_http_settings {
+    name                  = "app-gateway-http-settings"
+    cookie_based_affinity = "Disabled"
+    path                  = "/"
+    port                  = 80
+    protocol              = "Http"
+  }
+  http_listener {
+    name                           = "app-gateway-http-listener"
+    frontend_ip_configuration_name = "app-gateway-ip-config"
+    frontend_port_name             = "app-gateway-port"
+    protocol                       = "Http"
+  }
+  request_routing_rule {
+    name                       = "app-gateway-routing-rule"
+    rule_type                  = "Basic"
+    http_listener_name         = "app-gateway-http-listener"
+    backend_address_pool_name  = "app-gateway-backend-pool"
+    backend_http_settings_name = "app-gateway-http-settings"
+  }
+}
 
- frontend_ip_configuration {
-   name                 = "InternalIPAddress"
-   subnet_id            = var.app_subnet_id
- }
-}
-#Create a backend pool
-resource "azurerm_lb_backend_address_pool" "app_bpepool" {
- 
- loadbalancer_id     = azurerm_lb.app_lb.id
- name                = "BackEndAddressPool"
-}
-#Create load balancer probe
-resource "azurerm_lb_probe" "app_probe" {
- loadbalancer_id     = azurerm_lb.app_lb.id
- name                = "zantac-running-probe"
- port                = 80
-}
-#Create load balancer rule
-resource "azurerm_lb_rule" "app_lb_rule" {
-   loadbalancer_id                = azurerm_lb.app_lb.id
-   name                           = "http"
-   protocol                       = "Tcp"
-   frontend_port                  = 80
-   backend_port                   = 80
-   backend_address_pool_ids        = [azurerm_lb_backend_address_pool.app_bpepool.id]
-   frontend_ip_configuration_name = "InternalIPAddress"
-   probe_id                       = azurerm_lb_probe.app_probe.id
-}
 #Create a virtual machine scale set
 resource "azurerm_virtual_machine_scale_set" "app_vmss" {
  name                = "var.app_vmss"
@@ -280,6 +295,7 @@ resource "azurerm_virtual_machine_scale_set" "app_vmss" {
      name                                   = "IPConfiguration"
      subnet_id                              = var.app_subnet_id
      load_balancer_backend_address_pool_ids = [azurerm_lb_backend_address_pool.bpepool.id]
+     application_gateway_backend_address_pool_ids = [azurerm_application_gateway.app_gateway.backend_address_pool_id]
      primary = true
    }
  }
